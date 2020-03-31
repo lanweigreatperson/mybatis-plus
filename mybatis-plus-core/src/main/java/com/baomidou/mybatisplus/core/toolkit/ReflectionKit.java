@@ -28,15 +28,13 @@ import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
 /**
- * <p>
- * 反射工具类
- * </p>
+ * 反射工具类，提供反射相关的快捷操作
  *
  * @author Caratacus
+ * @author hcl
  * @since 2016-09-22
  */
-public class ReflectionKit {
-
+public final class ReflectionKit {
     private static final Log logger = LogFactory.getLog(ReflectionKit.class);
     /**
      * class field cache
@@ -63,11 +61,13 @@ public class ReflectionKit {
      *
      * @param field
      * @param str   属性字符串内容
+     * @deprecated 3.3.0 {@link #guessGetterName(Field, String)}
      */
+    @Deprecated
     public static String getMethodCapitalize(Field field, final String str) {
         Class<?> fieldType = field.getType();
         // fix #176
-        return StringUtils.concatCapitalize(boolean.class.equals(fieldType) ? "is" : "get", str);
+        return StringUtils.guessGetterName(str, fieldType);
     }
 
     /**
@@ -84,7 +84,7 @@ public class ReflectionKit {
     public static String setMethodCapitalize(Field field, final String str) {
         return StringUtils.concatCapitalize("set", str);
     }
-
+    
     /**
      * <p>
      * 获取 public get方法的值
@@ -94,12 +94,14 @@ public class ReflectionKit {
      * @param entity 实体
      * @param str    属性字符串内容
      * @return Object
+     * @deprecated 3.3.2
      */
+    @Deprecated
     public static Object getMethodValue(Class<?> cls, Object entity, String str) {
         Map<String, Field> fieldMaps = getFieldMap(cls);
         try {
             Assert.notEmpty(fieldMaps, "Error: NoSuchField in %s for %s.  Cause:", cls.getSimpleName(), str);
-            Method method = cls.getMethod(getMethodCapitalize(fieldMaps.get(str), str));
+            Method method = cls.getMethod(guessGetterName(fieldMaps.get(str), str));
             return method.invoke(entity);
         } catch (NoSuchMethodException e) {
             throw ExceptionUtils.mpe("Error: NoSuchMethod in %s.  Cause:", e, cls.getSimpleName());
@@ -109,7 +111,39 @@ public class ReflectionKit {
             throw ExceptionUtils.mpe("Error: InvocationTargetException on getMethodValue.  Cause:" + e);
         }
     }
-
+    
+    /**
+     * 获取字段值
+     *
+     * @param entity    实体
+     * @param fieldName 字段名称
+     * @return 属性值
+     */
+    public static Object getFieldValue(Object entity, String fieldName) {
+        Class cls = entity.getClass();
+        Map<String, Field> fieldMaps = getFieldMap(cls);
+        try {
+            Field field = fieldMaps.get(fieldName);
+            Assert.notNull(field, "Error: NoSuchField in %s for %s.  Cause:", cls.getSimpleName(), fieldName);
+            field.setAccessible(true);
+            return field.get(entity);
+        } catch (ReflectiveOperationException e) {
+            throw ExceptionUtils.mpe("Error: Cannot read field in %s.  Cause:", e, cls.getSimpleName());
+        }
+    }
+    
+    /**
+     * 猜测方法名
+     *
+     * @param field 字段
+     * @param str   属性字符串内容
+     * @deprecated 3.3.2
+     */
+    @Deprecated
+    private static String guessGetterName(Field field, final String str) {
+        return StringUtils.guessGetterName(str, field.getType());
+    }
+    
     /**
      * <p>
      * 获取 public get方法的值
@@ -118,7 +152,9 @@ public class ReflectionKit {
      * @param entity 实体
      * @param str    属性字符串内容
      * @return Object
+     * @deprecated 3.3.2
      */
+    @Deprecated
     public static Object getMethodValue(Object entity, String str) {
         if (null == entity) {
             return null;
@@ -144,12 +180,12 @@ public class ReflectionKit {
         Type[] params = ((ParameterizedType) genType).getActualTypeArguments();
         if (index >= params.length || index < 0) {
             logger.warn(String.format("Warn: Index: %s, Size of %s's Parameterized Type: %s .", index,
-                clazz.getSimpleName(), params.length));
+                    clazz.getSimpleName(), params.length));
             return Object.class;
         }
         if (!(params[index] instanceof Class)) {
             logger.warn(String.format("Warn: %s not set the actual class on superclass generic parameter",
-                clazz.getSimpleName()));
+                    clazz.getSimpleName()));
             return Object.class;
         }
         return (Class<?>) params[index];
@@ -201,21 +237,17 @@ public class ReflectionKit {
             Map<String, Field> fieldMap = excludeOverrideSuperField(clazz.getDeclaredFields(),
                 /* 处理父类字段 */
                 getFieldList(clazz.getSuperclass()));
-            List<Field> fieldList = new ArrayList<>();
             /*
              * 重写父类属性过滤后处理忽略部分，支持过滤父类属性功能
              * 场景：中间表不需要记录创建时间，忽略父类 createTime 公共属性
              * 中间表实体重写父类属性 ` private transient Date createTime; `
              */
-            fieldMap.forEach((k, v) -> {
+            return fieldMap.values().stream()
                 /* 过滤静态属性 */
-                if (!Modifier.isStatic(v.getModifiers())
-                    /* 过滤 transient关键字修饰的属性 */
-                    && !Modifier.isTransient(v.getModifiers())) {
-                    fieldList.add(v);
-                }
-            });
-            return fieldList;
+                .filter(f -> !Modifier.isStatic(f.getModifiers()))
+                /* 过滤 transient关键字修饰的属性 */
+                .filter(f -> !Modifier.isTransient(f.getModifiers()))
+                .collect(Collectors.toList());
         } else {
             return Collections.emptyList();
         }
@@ -232,25 +264,27 @@ public class ReflectionKit {
     public static Map<String, Field> excludeOverrideSuperField(Field[] fields, List<Field> superFieldList) {
         // 子类属性
         Map<String, Field> fieldMap = Stream.of(fields).collect(toMap(Field::getName, identity(),
-            (u, v) -> {
-                throw new IllegalStateException(String.format("Duplicate key %s", u));
-            },
-            LinkedHashMap::new));
+                (u, v) -> {
+                    throw new IllegalStateException(String.format("Duplicate key %s", u));
+                },
+                LinkedHashMap::new));
         superFieldList.stream().filter(field -> !fieldMap.containsKey(field.getName()))
-            .forEach(f -> fieldMap.put(f.getName(), f));
+                .forEach(f -> fieldMap.put(f.getName(), f));
         return fieldMap;
     }
-
+    
     /**
      * 获取字段get方法
      *
      * @param cls   class
      * @param field 字段
      * @return Get方法
+     * @deprecated 3.3.2
      */
+    @Deprecated
     public static Method getMethod(Class<?> cls, Field field) {
         try {
-            return cls.getDeclaredMethod(ReflectionKit.getMethodCapitalize(field, field.getName()));
+            return cls.getDeclaredMethod(ReflectionKit.guessGetterName(field, field.getName()));
         } catch (NoSuchMethodException e) {
             throw ExceptionUtils.mpe("Error: NoSuchMethod in %s.  Cause:", e, cls.getName());
         }
@@ -266,4 +300,5 @@ public class ReflectionKit {
         Assert.notNull(clazz, "Class must not be null");
         return (clazz.isPrimitive() || PRIMITIVE_WRAPPER_TYPE_MAP.containsKey(clazz));
     }
+
 }

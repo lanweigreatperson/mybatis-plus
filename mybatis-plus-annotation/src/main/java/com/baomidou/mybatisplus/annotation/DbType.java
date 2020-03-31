@@ -18,9 +18,6 @@ package com.baomidou.mybatisplus.annotation;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
  * MybatisPlus 数据库类型
  *
@@ -30,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Getter
 @AllArgsConstructor
 public enum DbType {
+
     /**
      * MYSQL
      */
@@ -41,7 +39,12 @@ public enum DbType {
     /**
      * ORACLE
      */
-    ORACLE("oracle", "Oracle数据库", "com.baomidou.mybatisplus.extension.plugins.pagination.dialects.OracleDialect"),
+    ORACLE("oracle", "Oracle11g及以下数据库(高版本推荐使用ORACLE_NEW)", "com.baomidou.mybatisplus.extension.plugins.pagination.dialects.OracleDialect"),
+    /**
+     * oracle12c new pagination
+     */
+    ORACLE_12C("oracle12c", "Oracle12c+数据库","com.baomidou.mybatisplus.extension.plugins.pagination.dialects.Oracle12cDialect"),
+
     /**
      * DB2
      */
@@ -79,6 +82,16 @@ public enum DbType {
      */
     XU_GU("xugu", "虚谷数据库", "com.baomidou.mybatisplus.extension.plugins.pagination.dialects.XuGuDialect"),
     /**
+     * Kingbase
+     */
+    KINGBASE_ES("kingbasees", "人大金仓数据库", "com.baomidou.mybatisplus.extension.plugins.pagination.dialects.KingbaseDialect"),
+
+    /**
+     * Phoenix
+     */
+    PHOENIX("phoenix", "Phoenix HBase数据库", "com.baomidou.mybatisplus.extension.plugins.pagination.dialects.PhoenixDialect"),
+
+    /**
      * UNKONWN DB
      */
     OTHER("other", "其他数据库", "com.baomidou.mybatisplus.extension.plugins.pagination.dialects.UnknownDialect");
@@ -94,16 +107,11 @@ public enum DbType {
 
     /**
      * 分页方言
+     *
+     * @deprecated 3.3.1
      */
+    @Deprecated
     private String dialect;
-
-    private static Map<String,DbType> DB_CACHE_MAP = new ConcurrentHashMap<>();
-
-    static {
-        for (DbType dbType : DbType.values()) {
-            DB_CACHE_MAP.put(dbType.getDb().toLowerCase(), dbType);
-        }
-    }
 
     /**
      * 获取数据库类型
@@ -111,6 +119,12 @@ public enum DbType {
      * @param dbType 数据库类型字符串
      */
     public static DbType getDbType(String dbType) {
-        return DB_CACHE_MAP.getOrDefault(dbType.toLowerCase(), OTHER);
+        for (DbType type : DbType.values()) {
+            if (type.db.equalsIgnoreCase(dbType)) {
+                return type;
+            }
+        }
+        return OTHER;
+
     }
 }

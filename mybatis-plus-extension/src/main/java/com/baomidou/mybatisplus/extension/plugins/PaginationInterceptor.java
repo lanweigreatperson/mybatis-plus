@@ -21,13 +21,11 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.metadata.OrderItem;
 import com.baomidou.mybatisplus.core.parser.ISqlParser;
 import com.baomidou.mybatisplus.core.parser.SqlInfo;
-import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
-import com.baomidou.mybatisplus.core.toolkit.ExceptionUtils;
-import com.baomidou.mybatisplus.core.toolkit.PluginUtils;
-import com.baomidou.mybatisplus.core.toolkit.StringUtils;
+import com.baomidou.mybatisplus.core.toolkit.*;
 import com.baomidou.mybatisplus.extension.handlers.AbstractSqlParserHandler;
 import com.baomidou.mybatisplus.extension.plugins.pagination.DialectFactory;
 import com.baomidou.mybatisplus.extension.plugins.pagination.DialectModel;
+import com.baomidou.mybatisplus.extension.plugins.pagination.dialects.IDialect;
 import com.baomidou.mybatisplus.extension.toolkit.JdbcUtils;
 import com.baomidou.mybatisplus.extension.toolkit.SqlParserUtils;
 import lombok.Setter;
@@ -50,10 +48,7 @@ import org.apache.ibatis.session.RowBounds;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -71,25 +66,41 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
     /**
      * COUNT SQL 解析
      */
-    private ISqlParser countSqlParser;
+    protected ISqlParser countSqlParser;
     /**
-     * 溢出总页数，设置第一页
+     * 溢出总页数后是否进行处理
      */
-    private boolean overflow = false;
+    protected boolean overflow = false;
     /**
      * 单页限制 500 条，小于 0 如 -1 不受限制
      */
-    private long limit = 500L;
+    protected long limit = 500L;
+    /**
+     * 数据库类型
+     *
+     * @since 3.3.1
+     */
+    private DbType dbType;
+    /**
+     * 方言实现类
+     *
+     * @since 3.3.1
+     */
+    private IDialect dialect;
     /**
      * 方言类型(数据库名,全小写) <br>
      * 如果用的我们支持分页的数据库但获取数据库类型不正确则可以配置该值进行校正
+     * @deprecated 3.3.1 {@link #setDbType(DbType)}
      */
-    private String dialectType;
+    @Deprecated
+    protected String dialectType;
     /**
      * 方言实现类<br>
      * 注意！实现 com.baomidou.mybatisplus.extension.plugins.pagination.dialects.IDialect 接口的子类
+     * @deprecated 3.3.1 {@link #setDialect(IDialect)}
      */
-    private String dialectClazz;
+    @Deprecated
+    protected String dialectClazz;
 
     /**
      * 查询SQL拼接Order By
@@ -98,7 +109,7 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
      * @param page        page对象
      * @return ignore
      */
-    public static String concatOrderBy(String originalSql, IPage<?> page) {
+    public String concatOrderBy(String originalSql, IPage<?> page) {
         if (CollectionUtils.isNotEmpty(page.orders())) {
             try {
                 List<OrderItem> orderList = page.orders();
@@ -132,11 +143,12 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
     private static List<OrderByElement> addOrderByElements(List<OrderItem> orderList, List<OrderByElement> orderByElements) {
         orderByElements = CollectionUtils.isEmpty(orderByElements) ? new ArrayList<>(orderList.size()) : orderByElements;
         List<OrderByElement> orderByElementList = orderList.stream()
-            .filter(item -> StringUtils.isNotEmpty(item.getColumn()))
+            .filter(item -> StringUtils.isNotBlank(item.getColumn()))
             .map(item -> {
                 OrderByElement element = new OrderByElement();
                 element.setExpression(new Column(item.getColumn()));
                 element.setAsc(item.isAsc());
+                element.setAscDescPresent(true);
                 return element;
             }).collect(Collectors.toList());
         orderByElements.addAll(orderByElementList);
@@ -167,17 +179,7 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
         Object paramObj = boundSql.getParameterObject();
 
         // 判断参数里是否有page对象
-        IPage<?> page = null;
-        if (paramObj instanceof IPage) {
-            page = (IPage<?>) paramObj;
-        } else if (paramObj instanceof Map) {
-            for (Object arg : ((Map<?, ?>) paramObj).values()) {
-                if (arg instanceof IPage) {
-                    page = (IPage<?>) arg;
-                    break;
-                }
-            }
-        }
+        IPage<?> page = ParameterUtils.findPage(paramObj).orElse(null);
 
         /*
          * 不需要分页的场合，如果 size 小于 0 返回结果集
@@ -186,28 +188,25 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
             return invocation.proceed();
         }
 
-        /*
-         * 处理单页条数限制
-         */
-        if (limit > 0 && limit <= page.getSize()) {
-            page.setSize(limit);
+        if (this.limit > 0 && this.limit <= page.getSize()) {
+            //处理单页条数限制
+            handlerLimit(page);
         }
 
         String originalSql = boundSql.getSql();
         Connection connection = (Connection) invocation.getArgs()[0];
-        DbType dbType = StringUtils.isNotEmpty(dialectType) ? DbType.getDbType(dialectType)
-            : JdbcUtils.getDbType(connection.getMetaData().getURL());
 
-        if (page.isSearchCount()) {
+        if (page.isSearchCount() && !page.isHitCount()) {
             SqlInfo sqlInfo = SqlParserUtils.getOptimizeCountSql(page.optimizeCountSql(), countSqlParser, originalSql);
-            this.queryTotal(overflow, sqlInfo.getSql(), mappedStatement, boundSql, page, connection);
+            this.queryTotal(sqlInfo.getSql(), mappedStatement, boundSql, page, connection);
             if (page.getTotal() <= 0) {
                 return null;
             }
         }
-
+        DbType dbType = this.dbType == null ? JdbcUtils.getDbType(connection.getMetaData().getURL()) : this.dbType;
+        IDialect dialect = Optional.ofNullable(this.dialect).orElseGet(() -> DialectFactory.getDialect(dbType));
         String buildSql = concatOrderBy(originalSql, page);
-        DialectModel model = DialectFactory.buildPaginationSql(page, buildSql, dbType, dialectClazz);
+        DialectModel model = dialect.buildPaginationSql(buildSql, page.offset(), page.getSize());
         Configuration configuration = mappedStatement.getConfiguration();
         List<ParameterMapping> mappings = new ArrayList<>(boundSql.getParameterMappings());
         Map<String, Object> additionalParameters = (Map<String, Object>) metaObject.getValue("delegate.boundSql.additionalParameters");
@@ -215,6 +214,15 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
         metaObject.setValue("delegate.boundSql.sql", model.getDialectSql());
         metaObject.setValue("delegate.boundSql.parameterMappings", mappings);
         return invocation.proceed();
+    }
+
+    /**
+     * 处理超出分页条数限制,默认归为限制数
+     *
+     * @param page IPage
+     */
+    protected void handlerLimit(IPage<?> page) {
+        page.setSize(this.limit);
     }
 
     /**
@@ -226,7 +234,7 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
      * @param page            IPage
      * @param connection      Connection
      */
-    protected void queryTotal(boolean overflowCurrent, String sql, MappedStatement mappedStatement, BoundSql boundSql, IPage<?> page, Connection connection) {
+    protected void queryTotal(String sql, MappedStatement mappedStatement, BoundSql boundSql, IPage<?> page, Connection connection) {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             DefaultParameterHandler parameterHandler = new MybatisDefaultParameterHandler(mappedStatement, boundSql.getParameterObject(), boundSql);
             parameterHandler.setParameters(statement);
@@ -237,17 +245,22 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
                 }
             }
             page.setTotal(total);
-            /*
-             * 溢出总页数，设置第一页
-             */
-            long pages = page.getPages();
-            if (overflowCurrent && page.getCurrent() > pages) {
-                // 设置为第一条
-                page.setCurrent(1);
+            if (this.overflow && page.getCurrent() > page.getPages()) {
+                //溢出总页数处理
+                handlerOverflow(page);
             }
         } catch (Exception e) {
             throw ExceptionUtils.mpe("Error: Method queryTotal execution error of sql : \n %s \n", e, sql);
         }
+    }
+
+    /**
+     * 处理页数溢出,默认设置为第一页
+     *
+     * @param page IPage
+     */
+    protected void handlerOverflow(IPage<?> page) {
+        page.setCurrent(1);
     }
 
     @Override
@@ -262,12 +275,34 @@ public class PaginationInterceptor extends AbstractSqlParserHandler implements I
     public void setProperties(Properties prop) {
         String dialectType = prop.getProperty("dialectType");
         String dialectClazz = prop.getProperty("dialectClazz");
-        if (StringUtils.isNotEmpty(dialectType)) {
-            this.dialectType = dialectType;
+        if (StringUtils.isNotBlank(dialectType)) {
+            setDialectType(dialectType);
         }
-        if (StringUtils.isNotEmpty(dialectClazz)) {
-            this.dialectClazz = dialectClazz;
+        if (StringUtils.isNotBlank(dialectClazz)) {
+            setDialectClazz(dialectClazz);
         }
+    }
+
+    /**
+     * 设置方言类型
+     *
+     * @param dialectType 数据库名,全小写
+     * @deprecated 3.3.1 {@link #setDbType(DbType)}
+     */
+    @Deprecated
+    public void setDialectType(String dialectType) {
+        setDbType(DbType.getDbType(dialectType));
+    }
+
+    /**
+     * 设置方言实现类
+     *
+     * @param dialectClazz 方言实现类
+     * @deprecated 3.3.1 {@link #setDialect(IDialect)}}
+     */
+    @Deprecated
+    public void setDialectClazz(String dialectClazz) {
+        setDialect(DialectFactory.getDialect(dialectClazz));
     }
 
 }

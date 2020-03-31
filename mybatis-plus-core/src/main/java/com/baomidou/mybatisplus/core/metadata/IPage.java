@@ -15,6 +15,9 @@
  */
 package com.baomidou.mybatisplus.core.metadata;
 
+import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
+import com.baomidou.mybatisplus.core.toolkit.StringPool;
+
 import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
@@ -117,6 +120,26 @@ public interface IPage<T> extends Serializable {
     }
 
     /**
+     * 设置是否命中count缓存
+     *
+     * @param hit 是否命中
+     * @since 3.3.1
+     */
+    default void hitCount(boolean hit) {
+
+    }
+
+    /**
+     * 是否命中count缓存
+     *
+     * @return 是否命中count缓存
+     * @since 3.3.1
+     */
+    default boolean isHitCount() {
+        return false;
+    }
+
+    /**
      * 分页记录列表
      *
      * @return 分页对象记录列表
@@ -141,14 +164,14 @@ public interface IPage<T> extends Serializable {
     IPage<T> setTotal(long total);
 
     /**
-     * 当前分页总页数
+     * 获取每页显示条数
      *
-     * @return 总页数
+     * @return 每页显示条数
      */
     long getSize();
 
     /**
-     * 设置当前分页总页数
+     * 设置每页显示条数
      */
     IPage<T> setSize(long size);
 
@@ -176,4 +199,23 @@ public interface IPage<T> extends Serializable {
         List<R> collect = this.getRecords().stream().map(mapper).collect(toList());
         return ((IPage<R>) this).setRecords(collect);
     }
+    
+    /**
+     * 生成缓存key值
+     *
+     * @return 缓存key值
+     * @since 3.3.2
+     */
+    default String cacheKey() {
+        StringBuilder key = new StringBuilder();
+        key.append(getCurrent()).append(StringPool.COLON).append(getSize());
+        List<OrderItem> orders = orders();
+        if (CollectionUtils.isNotEmpty(orders)) {
+            for (OrderItem item : orders) {
+                key.append(StringPool.COLON).append(item.getColumn()).append(StringPool.COLON).append(item.isAsc());
+            }
+        }
+        return key.toString();
+    }
+    
 }

@@ -16,11 +16,12 @@
 package com.baomidou.mybatisplus.extension.plugins.tenant;
 
 import com.baomidou.mybatisplus.core.parser.AbstractJsqlParser;
-import com.baomidou.mybatisplus.core.toolkit.Assert;
 import com.baomidou.mybatisplus.core.toolkit.ExceptionUtils;
 import com.baomidou.mybatisplus.core.toolkit.StringPool;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 import net.sf.jsqlparser.expression.BinaryExpression;
 import net.sf.jsqlparser.expression.Expression;
@@ -30,7 +31,6 @@ import net.sf.jsqlparser.expression.operators.conditional.OrExpression;
 import net.sf.jsqlparser.expression.operators.relational.*;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.schema.Table;
-import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.delete.Delete;
 import net.sf.jsqlparser.statement.insert.Insert;
 import net.sf.jsqlparser.statement.select.*;
@@ -45,6 +45,8 @@ import java.util.List;
  * @since 2017-09-01
  */
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 @Accessors(chain = true)
 @EqualsAndHashCode(callSuper = true)
 public class TenantSqlParser extends AbstractJsqlParser {
@@ -101,10 +103,7 @@ public class TenantSqlParser extends AbstractJsqlParser {
      */
     @Override
     public void processUpdate(Update update) {
-        List<Table> tableList = update.getTables();
-        Assert.isTrue(null != tableList && tableList.size() < 2,
-            "Failed to process multiple-table update, please exclude the statementId");
-        Table table = tableList.get(0);
+        final Table table = update.getTable();
         if (tenantHandler.doTableFilter(table.getName())) {
             // 过滤退出执行
             return;
@@ -159,12 +158,11 @@ public class TenantSqlParser extends AbstractJsqlParser {
         FromItem fromItem = plainSelect.getFromItem();
         if (fromItem instanceof Table) {
             Table fromTable = (Table) fromItem;
-            if (!this.getTenantHandler().doTableFilter(fromTable.getName())) {
+            if (!tenantHandler.doTableFilter(fromTable.getName())) {
                 //#1186 github
                 plainSelect.setWhere(builderExpression(plainSelect.getWhere(), fromTable));
                 if (addColumn) {
-                    plainSelect.getSelectItems().add(new SelectExpressionItem(
-                        new Column(this.getTenantHandler().getTenantIdColumn())));
+                    plainSelect.getSelectItems().add(new SelectExpressionItem(new Column(tenantHandler.getTenantIdColumn())));
                 }
             }
         } else {
@@ -229,7 +227,7 @@ public class TenantSqlParser extends AbstractJsqlParser {
      * 默认tenantId的表达式： LongValue(1)这种依旧支持
      */
     protected Expression builderExpression(Expression currentExpression, Table table) {
-        final Expression tenantExpression = this.getTenantHandler().getTenantId(false);
+        final Expression tenantExpression = tenantHandler.getTenantId(false);
         Expression appendExpression;
         if (!(tenantExpression instanceof SupportsOldOracleJoinSyntax)) {
             appendExpression = new EqualsTo();
@@ -243,12 +241,8 @@ public class TenantSqlParser extends AbstractJsqlParser {
         }
         if (currentExpression instanceof BinaryExpression) {
             BinaryExpression binaryExpression = (BinaryExpression) currentExpression;
-            if (binaryExpression.getLeftExpression() instanceof FromItem) {
-                processFromItem((FromItem) binaryExpression.getLeftExpression());
-            }
-            if (binaryExpression.getRightExpression() instanceof FromItem) {
-                processFromItem((FromItem) binaryExpression.getRightExpression());
-            }
+            doExpression(binaryExpression.getLeftExpression());
+            doExpression(binaryExpression.getRightExpression());
         } else if (currentExpression instanceof InExpression) {
             InExpression inExp = (InExpression) currentExpression;
             ItemsList rightItems = inExp.getRightItemsList();
@@ -260,6 +254,18 @@ public class TenantSqlParser extends AbstractJsqlParser {
             return new AndExpression(new Parenthesis(currentExpression), appendExpression);
         } else {
             return new AndExpression(currentExpression, appendExpression);
+        }
+    }
+
+    protected void doExpression(Expression expression) {
+        if (expression instanceof FromItem) {
+            processFromItem((FromItem) expression);
+        } else if (expression instanceof InExpression) {
+            InExpression inExp = (InExpression) expression;
+            ItemsList rightItems = inExp.getRightItemsList();
+            if (rightItems instanceof SubSelect) {
+                processSelectBody(((SubSelect) rightItems).getSelectBody());
+            }
         }
     }
 

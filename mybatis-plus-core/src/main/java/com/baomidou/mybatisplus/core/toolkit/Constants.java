@@ -93,6 +93,10 @@ public interface Constants extends StringPool {
      */
     String Q_WRAPPER_SQL_COMMENT = WRAPPER_DOT + "sqlComment";
     /**
+     * wrapper 类的属性 sqlFirst
+     */
+    String Q_WRAPPER_SQL_FIRST = WRAPPER_DOT + "sqlFirst";
+    /**
      * columnMap
      */
     String COLUMN_MAP = "cm";
@@ -112,6 +116,7 @@ public interface Constants extends StringPool {
     /**
      * 乐观锁字段
      */
+    String MP_OPTLOCK_INTERCEPTOR = "oli";
     String MP_OPTLOCK_VERSION_ORIGINAL = "MP_OPTLOCK_VERSION_ORIGINAL";
     String MP_OPTLOCK_VERSION_COLUMN = "MP_OPTLOCK_VERSION_COLUMN";
     String MP_OPTLOCK_ET_ORIGINAL = "MP_OPTLOCK_ET_ORIGINAL";

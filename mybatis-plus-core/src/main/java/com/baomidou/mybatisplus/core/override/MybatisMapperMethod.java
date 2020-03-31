@@ -15,7 +15,7 @@
  */
 package com.baomidou.mybatisplus.core.override;
 
-import com.baomidou.mybatisplus.core.metadata.CachePage;
+import com.baomidou.mybatisplus.core.metadata.PageList;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import org.apache.ibatis.binding.BindingException;
 import org.apache.ibatis.binding.MapperMethod;
@@ -94,9 +94,11 @@ public class MybatisMapperMethod {
                         }
                         assert page != null;
                         result = executeForIPage(sqlSession, args);
-                        if (result instanceof CachePage) {
-                            CachePage cachePage = (CachePage) result;
-                            result = cachePage.getPage();
+                        if (result instanceof PageList) {
+                            PageList pageList = (PageList) result;
+                            page.setRecords(pageList.getRecords());
+                            page.setTotal(pageList.getTotal());
+                            result = page;
                         } else {
                             List list = (List<Object>) result;
                             result = page.setRecords(list);

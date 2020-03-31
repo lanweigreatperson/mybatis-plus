@@ -15,8 +15,6 @@
  */
 package com.baomidou.mybatisplus.generator.config.querys;
 
-import com.baomidou.mybatisplus.annotation.DbType;
-
 /**
  * PostgreSql 表数据查询
  *
@@ -24,13 +22,6 @@ import com.baomidou.mybatisplus.annotation.DbType;
  * @since 2018-01-16
  */
 public class PostgreSqlQuery extends AbstractDbQuery {
-
-
-    @Override
-    public DbType dbType() {
-        return DbType.POSTGRE_SQL;
-    }
-
 
     @Override
     public String tablesSql() {
